@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class AddressBase(BaseModel):
@@ -34,9 +34,8 @@ class AddressUpdateRequest(BaseModel):
 
 
 class AddressResponse(AddressBase):
+    model_config = ConfigDict(from_attributes=True)
+
     id: uuid.UUID
     user_id: uuid.UUID
     created_at: datetime
-
-    class Config:
-        orm_mode = True
