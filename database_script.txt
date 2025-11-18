@@ -1,0 +1,199 @@
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- user
+CREATE TYPE user_role AS ENUM ('user', 'admin');
+CREATE TYPE kyc_status AS ENUM ('unverified', 'pending', 'verified');
+
+-- listings
+CREATE TYPE listing_status AS ENUM ('pending', 'approved', 'sold', 'archived');
+CREATE TYPE condition_enum AS ENUM ('new', 'like_new', 'good', 'fair', 'poor');
+
+-- orders
+CREATE TYPE order_status AS ENUM (
+    'pending',
+    'confirmed',
+    'shipped',
+    'delivered',
+    'completed',
+    'canceled'
+);
+
+-- shipments
+CREATE TYPE shipment_provider AS ENUM ('amana', 'aramex', 'mock');
+CREATE TYPE shipment_status AS ENUM ('label_created','in_transit','delivered');
+
+-- wallet / transactions
+CREATE TYPE transaction_type AS ENUM ('hold','release','credit','debit');
+CREATE TYPE transaction_status AS ENUM ('pending','succeeded','failed');
+
+-- disputes
+CREATE TYPE dispute_status AS ENUM ('open','needs_info','resolved','rejected');
+
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    phone VARCHAR(50),
+    avatar_url VARCHAR(512),
+    role user_role NOT NULL DEFAULT 'user',
+    language VARCHAR(10) DEFAULT 'fr',
+    kyc_status kyc_status NOT NULL DEFAULT 'unverified',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_users_email ON users(email);
+
+CREATE TABLE sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    refresh_jti VARCHAR(128) UNIQUE NOT NULL,
+    user_agent TEXT,
+    ip VARCHAR(50),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ
+);
+
+CREATE TABLE addresses (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    line1 TEXT NOT NULL,
+    line2 TEXT,
+    city VARCHAR(60),
+    state VARCHAR(100),
+    postal_code VARCHAR(50),
+    country VARCHAR(100) DEFAULT 'MA',
+    is_default BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_addresses_user ON addresses(user_id);
+
+CREATE TABLE categories (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE listings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+
+    title VARCHAR(120) NOT NULL,
+    description VARCHAR(2000),
+    category UUID REFERENCES categories(id),
+    brand VARCHAR(60),
+    size VARCHAR(60),
+
+    condition condition_enum NOT NULL,
+    price NUMERIC(12,2) NOT NULL CHECK (price > 0),
+    city VARCHAR(60) NOT NULL,
+
+    status listing_status NOT NULL DEFAULT 'pending',
+    is_locked BOOLEAN NOT NULL DEFAULT FALSE,       -- prevents double purchase
+    sold_at TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- filtering indexes
+CREATE INDEX idx_listings_filters 
+ON listings(status, category, city, price, created_at);
+
+CREATE INDEX idx_listings_user ON listings(user_id);
+
+CREATE TABLE listing_images (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    listing_id UUID NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+    url TEXT NOT NULL,
+    position INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_listing_images_listing ON listing_images(listing_id);
+
+CREATE TABLE orders (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+
+    listing_id UUID NOT NULL REFERENCES listings(id),
+    buyer_id UUID NOT NULL REFERENCES users(id),
+    seller_id UUID NOT NULL REFERENCES users(id),
+
+    price NUMERIC(12,2) NOT NULL,
+    buyer_fee NUMERIC(12,2) DEFAULT 0,
+
+    shipping_address_snapshot JSONB,  -- capture address at order time
+
+    status order_status NOT NULL DEFAULT 'pending',
+
+    idempotency_key VARCHAR(128),      -- for POST /orders
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+    UNIQUE (idempotency_key)
+);
+
+CREATE INDEX idx_orders_buyer ON orders(buyer_id, status, created_at);
+CREATE INDEX idx_orders_seller ON orders(seller_id, status, created_at);
+
+CREATE TABLE shipments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    provider shipment_provider NOT NULL DEFAULT 'mock',
+    tracking_code VARCHAR(255),
+    status shipment_status NOT NULL DEFAULT 'label_created',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE wallets (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    balance NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (balance >= 0),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE transactions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    order_id UUID REFERENCES orders(id),
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    type transaction_type NOT NULL,
+    status transaction_status NOT NULL,
+    destination TEXT,           -- for withdrawals
+    description TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_transactions_user ON transactions(user_id);
+
+CREATE TABLE withdrawal_requests (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id),
+    amount NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+    destination TEXT NOT NULL,
+    status transaction_status NOT NULL DEFAULT 'pending',
+    idempotency_key VARCHAR(128) UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE disputes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    order_id UUID NOT NULL REFERENCES orders(id),
+    opened_by UUID NOT NULL REFERENCES users(id),
+    reason TEXT NOT NULL,
+    resolution_note TEXT,
+    status dispute_status NOT NULL DEFAULT 'open',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE moderation_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    admin_id UUID NOT NULL REFERENCES users(id),
+    action TEXT NOT NULL,
+    target_listing UUID REFERENCES listings(id),
+    target_user UUID REFERENCES users(id),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);

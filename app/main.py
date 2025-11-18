@@ -1,9 +1,13 @@
 from fastapi import FastAPI
 
 from app.api.v1.routers import admin, auth, disputes, listings, media, orders, shipments, users, wallet
+from app.core.errors import setup_error_handlers
+from app.middleware.public_rate_limit import PublicRateLimitMiddleware
 
 
 app = FastAPI(title="LBAL Backend", version="0.1.0")
+setup_error_handlers(app)
+app.add_middleware(PublicRateLimitMiddleware)
 
 app.include_router(auth.router)
 app.include_router(users.router)

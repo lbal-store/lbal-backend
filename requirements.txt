@@ -10,5 +10,6 @@ redis
 boto3
 httpx
 pydantic
+pydantic-settings
 pytest
 pytest-asyncio

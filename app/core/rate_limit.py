@@ -1,7 +1,9 @@
-import time
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 import redis
+from redis.exceptions import RedisError
 
 from app.core.config import get_settings
 
@@ -9,28 +11,27 @@ from app.core.config import get_settings
 @dataclass
 class RateLimiter:
     prefix: str
+    limit: int
+    window_seconds: int
 
     def __post_init__(self) -> None:
-        self.settings = get_settings()
-        self.client = redis.Redis.from_url(self.settings.redis_url, decode_responses=True)
+        settings = get_settings()
+        self.client = redis.Redis.from_url(settings.redis_url, decode_responses=True)
 
-    def hit(self, key: str) -> bool:
-        redis_key = f"{self.prefix}:{key}"
-        with self.client.pipeline() as pipe:
-            while True:
-                try:
-                    pipe.watch(redis_key)
-                    current = pipe.get(redis_key)
-                    pipe.multi()
-                    if current is None:
-                        pipe.setex(redis_key, 60, 1)
-                        pipe.execute()
-                        return True
-                    if int(current) >= self.settings.rate_limit_per_minute:
-                        pipe.reset()
-                        return False
-                    pipe.setex(redis_key, 60, int(current) + 1)
-                    pipe.execute()
-                    return True
-                except redis.WatchError:
-                    continue
+    def allow(self, identifier: str) -> bool:
+        key = f"{self.prefix}:{identifier or 'unknown'}"
+        try:
+            count = self.client.incr(key)
+            if count == 1:
+                self.client.expire(key, self.window_seconds)
+            if count > self.limit:
+                return False
+            return True
+        except RedisError:
+            return True
+
+
+login_rate_limiter = RateLimiter(prefix="rate:login", limit=5, window_seconds=60)
+media_presign_rate_limiter = RateLimiter(prefix="rate:media:presign", limit=10, window_seconds=60)
+listing_create_rate_limiter = RateLimiter(prefix="rate:listings:create", limit=10, window_seconds=60 * 60)
+public_get_rate_limiter = RateLimiter(prefix="rate:public:get", limit=120, window_seconds=60)
