@@ -17,6 +17,7 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    get_password_hash,
     get_token_ttl_seconds,
     verify_password,
 )
@@ -24,6 +25,7 @@ from app.db.models.session import Session as SessionModel
 from app.db.models.user import User, UserRole
 from app.db.repositories.session_repository import SessionRepository
 from app.db.repositories.user_repository import UserRepository
+from app.db.repositories.wallet_repository import WalletRepository
 
 
 BLACKLIST_PREFIX = "auth:refresh:blacklist:"
@@ -35,7 +37,30 @@ class AuthService:
         self.redis = redis_client
         self.user_repository = UserRepository(db)
         self.session_repository = SessionRepository(db)
+        self.wallet_repository = WalletRepository(db)
         self.settings = get_settings()
+
+    def signup(self, *, name: str, email: str, password: str, user_agent: str | None, ip: str | None) -> dict[str, Any]:
+        if self.user_repository.get_by_email(email=email):
+            raise ApplicationError(
+                code=ErrorCode.CONFLICT,
+                message="Email already in use.",
+                status_code=409,
+            )
+
+        try:
+            password_hash = get_password_hash(password)
+        except ValueError as exc:
+            raise ApplicationError(
+                code=ErrorCode.VALIDATION_ERROR,
+                message=str(exc),
+                status_code=400,
+            ) from exc
+
+        user = self.user_repository.create(name=name, email=email, password_hash=password_hash)
+        self.wallet_repository.create_for_user(user.id)
+
+        return self._issue_tokens(user=user, user_agent=user_agent, ip=ip, include_session_id=False)
 
     def login(self, *, email: str, password: str, user_agent: str | None, ip: str | None) -> dict[str, Any]:
         user = self.user_repository.get_by_email(email=email)
@@ -44,20 +69,7 @@ class AuthService:
         if not user.is_active:
             raise ApplicationError(code=ErrorCode.ACCESS_DENIED, message="User account is disabled.", status_code=403)
 
-        session_id = uuid.uuid4()
-        refresh_jti = str(uuid.uuid4())
-        session = self.session_repository.create(
-            user_id=user.id,
-            refresh_jti=refresh_jti,
-            user_agent=user_agent,
-            ip=ip,
-            session_id=session_id,
-        )
-
-        refresh_token = create_refresh_token(user_id=str(user.id), session_id=str(session.id), jti=refresh_jti)
-        access_token = create_access_token(user_id=str(user.id), role=_role_value(user.role))
-
-        return self._build_token_response(user=user, session=session, access_token=access_token, refresh_token=refresh_token)
+        return self._issue_tokens(user=user, user_agent=user_agent, ip=ip, include_session_id=True)
 
     def refresh(self, *, refresh_token: str) -> dict[str, Any]:
         payload = self._decode_refresh_token(refresh_token)
@@ -74,12 +86,24 @@ class AuthService:
         ttl = get_token_ttl_seconds(payload)
         self._blacklist_jti(old_jti, ttl or self._default_refresh_ttl())
 
-        return self._build_token_response(user=user, session=session, access_token=access_token, refresh_token=new_refresh)
+        return self._build_auth_payload(
+            user=user,
+            session=session,
+            access_token=access_token,
+            refresh_token=new_refresh,
+            include_session_id=True,
+        )
 
-    def logout(self, *, refresh_token: str) -> None:
+    def logout(self, *, refresh_token: str, all_sessions: bool) -> None:
         payload = self._decode_refresh_token(refresh_token)
         session = self._validate_session(payload)
-        self.session_repository.revoke(session)
+        user = self._get_user(payload)
+
+        if all_sessions:
+            self.logout_all(user_id=user.id)
+        else:
+            self.session_repository.revoke(session)
+
         ttl = get_token_ttl_seconds(payload) or self._default_refresh_ttl()
         self._blacklist_jti(payload.jti, ttl)
 
@@ -92,20 +116,27 @@ class AuthService:
             if session.refresh_jti:
                 self._blacklist_jti(session.refresh_jti, ttl)
 
-    def _build_token_response(
-        self,
-        *,
-        user: User,
-        session: SessionModel,
-        access_token: IssuedToken,
-        refresh_token: IssuedToken,
-    ) -> dict[str, Any]:
-        return {
-            "access_token": access_token.token,
-            "refresh_token": refresh_token.token,
-            "token_type": "bearer",
-            "session_id": str(session.id),
-        }
+    def _issue_tokens(self, *, user: User, user_agent: str | None, ip: str | None, include_session_id: bool) -> dict[str, Any]:
+        session_id = uuid.uuid4()
+        refresh_jti = str(uuid.uuid4())
+        session = self.session_repository.create(
+            user_id=user.id,
+            refresh_jti=refresh_jti,
+            user_agent=user_agent,
+            ip=ip,
+            session_id=session_id,
+        )
+
+        refresh_token = create_refresh_token(user_id=str(user.id), session_id=str(session.id), jti=refresh_jti)
+        access_token = create_access_token(user_id=str(user.id), role=_role_value(user.role))
+
+        return self._build_auth_payload(
+            user=user,
+            session=session,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            include_session_id=include_session_id,
+        )
 
     def _decode_refresh_token(self, token: str) -> TokenPayload:
         try:
@@ -167,6 +198,37 @@ class AuthService:
 
     def _default_refresh_ttl(self) -> int:
         return int(self.settings.refresh_token_expire_minutes) * 60
+
+    def _serialize_user(self, user: User) -> dict[str, Any]:
+        return {
+            "id": str(user.id),
+            "name": user.name,
+            "email": user.email,
+            "role": _role_value(user.role),
+            "avatar_url": user.avatar_url,
+            "is_active": user.is_active,
+        }
+
+    def _build_auth_payload(
+        self,
+        *,
+        user: User,
+        session: SessionModel,
+        access_token: IssuedToken,
+        refresh_token: IssuedToken,
+        include_session_id: bool,
+    ) -> dict[str, Any]:
+        payload = {
+            "access_token": access_token.token,
+            "refresh_token": refresh_token.token,
+            "token_type": "bearer",
+            "user": self._serialize_user(user),
+        }
+
+        if include_session_id:
+            payload["session_id"] = str(session.id)
+
+        return payload
 
 
 def _role_value(role: UserRole | str) -> str:

@@ -80,3 +80,18 @@ def enforce_listing_create_rate_limit(current_user: User = Depends(get_current_u
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         )
     return current_user
+
+
+def extract_refresh_token(request: Request, provided_token: str | None) -> str:
+    if provided_token:
+        return provided_token
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        if token:
+            return token
+    raise ApplicationError(
+        code=ErrorCode.VALIDATION_ERROR,
+        message="Refresh token is required.",
+        status_code=status.HTTP_400_BAD_REQUEST,
+    )

@@ -5,11 +5,15 @@ alembic
 psycopg2-binary
 python-dotenv
 passlib[bcrypt]
-pyjwt
+python-jose[cryptography]
 redis
 boto3
 httpx
 pydantic
+pydantic[email]
 pydantic-settings
+email-validator
+bcrypt>=4.0.1,<4.1.0
 pytest
 pytest-asyncio
+pydantic-settings

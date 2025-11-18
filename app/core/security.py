@@ -6,13 +6,13 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any
 
-import jwt
+from jose import JWTError, jwt
 from passlib.context import CryptContext
 
 from app.core.config import get_settings
 
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["bcrypt_sha256"], deprecated="auto")
 
 
 class TokenType(str, Enum):
@@ -99,7 +99,7 @@ def decode_token(token: str, expected_type: TokenType | None = None) -> TokenPay
     settings = get_settings()
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.jwt_algorithm])
-    except jwt.PyJWTError as exc:  # pragma: no cover - defensive branch
+    except JWTError as exc:  # pragma: no cover - defensive branch
         raise InvalidTokenError("Could not decode token") from exc
 
     token_type = payload.get("token_type")
