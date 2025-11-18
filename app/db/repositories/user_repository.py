@@ -23,3 +23,26 @@ class UserRepository:
         self.db.commit()
         self.db.refresh(user)
         return user
+
+    def update_profile(
+        self,
+        user: User,
+        *,
+        name: str | None = None,
+        phone: str | None = None,
+        avatar_url: str | None = None,
+        language: str | None = None,
+    ) -> User:
+        if name is not None:
+            user.name = name
+        if phone is not None:
+            user.phone = phone
+        if avatar_url is not None:
+            user.avatar_url = avatar_url
+        if language is not None:
+            user.language = language
+
+        self.db.add(user)
+        self.db.commit()
+        self.db.refresh(user)
+        return user

@@ -1,5 +1,4 @@
 from __future__ import annotations
-from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from uuid import UUID
@@ -12,6 +11,9 @@ from app.core.rate_limit import listing_create_rate_limiter, login_rate_limiter,
 from app.core.security import InvalidTokenError, TokenType, decode_token
 from app.db.models.user import User
 from app.db.session import SessionLocal
+from app.db.repositories.user_repository import UserRepository
+from app.db.repositories.address_repository import AddressRepository
+from app.services.address_service import AddressService
 from app.services.auth_service import AuthService
 from app.utils.redis_client import get_redis_client
 
@@ -27,6 +29,21 @@ async def get_db() -> AsyncGenerator[Session, None]:
 def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
     redis_client = get_redis_client()
     return AuthService(db, redis_client)
+
+
+def get_user_repository(db: Session = Depends(get_db)) -> UserRepository:
+    return UserRepository(db)
+
+
+def get_address_repository(db: Session = Depends(get_db)) -> AddressRepository:
+    return AddressRepository(db)
+
+
+def get_address_service(
+    db: Session = Depends(get_db),
+    address_repo: AddressRepository = Depends(get_address_repository),
+) -> AddressService:
+    return AddressService(db=db, address_repo=address_repo)
 
 
 async def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
