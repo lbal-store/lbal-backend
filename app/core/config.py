@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
     aws_s3_bucket: str | None = None
+    aws_region: str = Field(default="eu-central-1")
     rate_limit_per_minute: int = Field(default=60)
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

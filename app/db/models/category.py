@@ -1,10 +1,13 @@
-from sqlalchemy import Column, Integer, String
+import uuid
+
+from sqlalchemy import Column, String
+from sqlalchemy.dialects.postgresql import UUID
 
 from app.db.base import Base
 
 
 class Category(Base):
-    __tablename__ = 'categories'
+    __tablename__ = "categories"
 
-    id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(255), unique=True, nullable=False)
