@@ -18,6 +18,7 @@ class ErrorCode(str, Enum):
     VALIDATION_ERROR = "VALIDATION_ERROR"
     ACCESS_DENIED = "ACCESS_DENIED"
     HTTP_ERROR = "HTTP_ERROR"
+    EMAIL_NOT_VERIFIED = "EMAIL_NOT_VERIFIED"
 
 
 class ApplicationError(Exception):

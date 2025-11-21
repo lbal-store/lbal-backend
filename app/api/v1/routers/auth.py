@@ -2,12 +2,16 @@ from fastapi import APIRouter, Depends, Request, status
 
 from app.api.v1 import deps
 from app.api.v1.schemas.auth import (
+    GoogleAuthRequest,
     LoginRequest,
     LoginResponse,
     LogoutRequest,
+    MessageResponse,
     RefreshRequest,
+    ResendVerificationRequest,
     SignupRequest,
     SignupResponse,
+    VerifyEmailRequest,
 )
 from app.db.models.user import User
 from app.services.auth_service import AuthService
@@ -27,6 +31,25 @@ def signup(
     return auth_service.signup(name=payload.name, email=payload.email, password=payload.password, user_agent=user_agent, ip=client_ip)
 
 
+@router.post("/verify-email", response_model=LoginResponse)
+def verify_email(
+    payload: VerifyEmailRequest,
+    request: Request,
+    auth_service: AuthService = Depends(deps.get_auth_service),
+) -> LoginResponse:
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    return auth_service.verify_email(email=payload.email, code=payload.code, user_agent=user_agent, ip=client_ip)
+
+
+@router.post("/resend-verification", response_model=MessageResponse)
+def resend_verification(
+    payload: ResendVerificationRequest,
+    auth_service: AuthService = Depends(deps.get_auth_service),
+) -> MessageResponse:
+    return auth_service.resend_verification(email=payload.email)
+
+
 @router.post("/login", response_model=LoginResponse, dependencies=[Depends(deps.enforce_login_rate_limit)])
 def login(
     payload: LoginRequest,
@@ -36,6 +59,17 @@ def login(
     client_ip = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
     return auth_service.login(email=payload.email, password=payload.password, user_agent=user_agent, ip=client_ip)
+
+
+@router.post("/google", response_model=LoginResponse)
+def google_login(
+    payload: GoogleAuthRequest,
+    request: Request,
+    auth_service: AuthService = Depends(deps.get_auth_service),
+) -> LoginResponse:
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+    return auth_service.google_login(id_token=payload.id_token, user_agent=user_agent, ip=client_ip)
 
 
 @router.post("/refresh", response_model=LoginResponse)
