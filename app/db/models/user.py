@@ -32,6 +32,7 @@ class User(Base):
     language = Column(String(10), default="fr")
     kyc_status = Column(Enum(KycStatus), nullable=False, default=KycStatus.unverified)
     is_active = Column(Boolean, nullable=False, default=True)
+    has_unread_notifications = Column(Boolean, nullable=False, default=False)
     google_user_id = Column(String(255), unique=True)
     provider = Column(String(50), nullable=False, default="password")
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -85,3 +85,34 @@ class ListingRepository:
         total = query.count()
         listings = query.offset(offset).limit(limit).all()
         return listings, total
+
+    def check_availability(self, listing_id: UUID, *, for_update: bool = False) -> Listing | None:
+        query = self.db.query(Listing).filter(Listing.id == listing_id)
+        if for_update:
+            query = query.with_for_update()
+        return query.one_or_none()
+
+    def lock_listing(self, listing: Listing | UUID) -> Listing | None:
+        target: Listing | None
+        if isinstance(listing, Listing):
+            target = listing
+        else:
+            target = self.check_availability(listing, for_update=True)
+        if not target:
+            return None
+
+        target.is_locked = True
+        target.status = ListingStatus.sold
+        self.db.add(target)
+        self.db.flush()
+        self.db.refresh(target)
+        return target
+
+    def release_listing(self, listing: Listing, *, new_status: ListingStatus | None = None) -> Listing:
+        listing.is_locked = False
+        if new_status:
+            listing.status = new_status
+        self.db.add(listing)
+        self.db.flush()
+        self.db.refresh(listing)
+        return listing

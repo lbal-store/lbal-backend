@@ -58,7 +58,7 @@ class ListingSortOption(str, Enum):
 
 
 class ListingFilterParams(BaseModel):
-    category_id: Optional[uuid.UUID] = None
+    category_id: Optional[str] = None
     city: Optional[str] = None
     condition: Optional[ListingCondition] = None
     min_price: Optional[Decimal] = Field(default=None, gt=0)
@@ -84,6 +84,10 @@ class ListingImageResponse(BaseModel):
 class CreateListingImageRequest(BaseModel):
     url: HttpUrl
     position: Optional[int] = Field(default=None, ge=0)
+
+
+class BulkListingCreateRequest(BaseModel):
+    listings: list[ListingCreate] = Field(..., min_length=1, description="Listings to create.")
 
 
 class ListingListResponse(BaseModel):

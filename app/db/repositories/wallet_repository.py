@@ -17,3 +17,20 @@ class WalletRepository:
         self.db.commit()
         self.db.refresh(wallet)
         return wallet
+
+    def get_by_user_id(self, user_id: UUID) -> Wallet | None:
+        return self.db.query(Wallet).filter(Wallet.user_id == user_id).one_or_none()
+
+    def get_for_update(self, user_id: UUID) -> Wallet | None:
+        return (
+            self.db.query(Wallet)
+            .filter(Wallet.user_id == user_id)
+            .with_for_update()
+            .one_or_none()
+        )
+
+    def save(self, wallet: Wallet) -> Wallet:
+        self.db.add(wallet)
+        self.db.flush()
+        self.db.refresh(wallet)
+        return wallet

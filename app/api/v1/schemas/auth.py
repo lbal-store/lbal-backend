@@ -33,6 +33,7 @@ class AuthUser(BaseModel):
     role: str
     avatar_url: str | None = None
     is_active: bool
+    has_unread_notifications: bool
 
 
 class TokenBundle(BaseModel):

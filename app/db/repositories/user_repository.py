@@ -39,6 +39,7 @@ class UserRepository:
             google_user_id=google_user_id,
             avatar_url=avatar_url,
             is_active=is_active,
+            has_unread_notifications=False,
         )
         self.db.add(user)
         self.db.commit()
@@ -74,3 +75,15 @@ class UserRepository:
         self.db.commit()
         self.db.refresh(user)
         return user
+
+    def set_has_unread_notifications(self, user_id: UUID, value: bool, *, commit: bool) -> None:
+        user = self.db.get(User, user_id)
+        if not user:
+            return
+        user.has_unread_notifications = value
+        self.db.add(user)
+        if commit:
+            self.db.commit()
+            self.db.refresh(user)
+        else:
+            self.db.flush()

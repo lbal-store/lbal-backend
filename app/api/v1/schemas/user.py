@@ -19,6 +19,17 @@ class UserMeResponse(BaseModel):
     role: UserRole
     language: Optional[str] = Field(default=None, max_length=10)
     is_active: bool
+    has_unread_notifications: bool
+
+
+class UserPublicProfileResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    avatar_url: Optional[str] = Field(default=None, max_length=512)
+    language: Optional[str] = Field(default=None, max_length=10)
+    is_active: bool
 
 
 class UserUpdateRequest(BaseModel):

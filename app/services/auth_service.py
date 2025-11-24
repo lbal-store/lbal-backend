@@ -287,6 +287,7 @@ class AuthService:
             "role": _role_value(user.role),
             "avatar_url": user.avatar_url,
             "is_active": user.is_active,
+            "has_unread_notifications": user.has_unread_notifications,
         }
 
     def _build_auth_payload(

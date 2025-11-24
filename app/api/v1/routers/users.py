@@ -1,7 +1,9 @@
-from fastapi import APIRouter, Depends
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.v1 import deps
-from app.api.v1.schemas.user import UserMeResponse, UserUpdateRequest
+from app.api.v1.schemas.user import UserMeResponse, UserPublicProfileResponse, UserUpdateRequest
 from app.db.models.user import User
 from app.db.repositories.user_repository import UserRepository
 
@@ -29,3 +31,15 @@ def update_current_user(
         language=update_data.get("language"),
     )
     return UserMeResponse.from_orm(updated_user)
+
+
+@router.get("/{user_id}", response_model=UserPublicProfileResponse)
+def read_user_profile(
+    user_id: UUID,
+    current_user: User = Depends(deps.get_current_user),
+    user_repo: UserRepository = Depends(deps.get_user_repository),
+) -> UserPublicProfileResponse:
+    user = user_repo.get_by_id(user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=404, detail="User not found")
+    return UserPublicProfileResponse.from_orm(user)

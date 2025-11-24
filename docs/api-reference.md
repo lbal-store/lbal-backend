@@ -58,7 +58,8 @@ Confirm a newly created account using the emailed code. Returns an authenticated
     "email": "jane@example.com",
     "role": "user",
     "avatar_url": null,
-    "is_active": true
+    "is_active": true,
+    "has_unread_notifications": false
   }
 }
 ```
@@ -129,6 +130,8 @@ Authenticated endpoint that removes every session for the current user.
 
 Authentication: all endpoints require a valid access token.
 
+Every response that embeds a full user object (auth payloads, `/users/me`, etc.) now includes a `has_unread_notifications` boolean so the UI can show a badge without issuing another request.
+
 ### `GET /users/me`
 Return the hydrated profile for the logged-in user.
 
@@ -142,7 +145,8 @@ Return the hydrated profile for the logged-in user.
   "avatar_url": "https://cdn.lbal.com/u/8f20/avatar.png",
   "role": "user",
   "language": "fr",
-  "is_active": true
+  "is_active": true,
+  "has_unread_notifications": false
 }
 ```
 
@@ -160,6 +164,20 @@ Partial update of profile attributes. Only provided fields are changed.
 ```
 
 **200 Response**: same shape as `GET /users/me`.
+
+### `GET /users/{user_id}`
+Fetch the public profile for any active user by ID. Requires authentication.
+
+**200 Response**
+```json
+{
+  "id": "8f20b883-1c37-4820-a2a6-ff3fc5010a53",
+  "name": "Jane Founder",
+  "avatar_url": "https://cdn.lbal.com/u/8f20/avatar.png",
+  "language": "fr",
+  "is_active": true
+}
+```
 
 ---
 
@@ -244,7 +262,7 @@ Public search endpoint that supports filtering and pagination.
 
 **Query params**
 - `page` (default 1), `page_size` (default 20, max 50)
-- `category_id`, `city`, `condition`, `min_price`, `max_price`
+- `category_id` accepts either the UUID returned by `/categories` or a case-insensitive category name/slug such as `men`; `city`, `condition`, `min_price`, `max_price`
 - `sort_by`: `price | newest | oldest` (default `newest`)
 
 **200 Response**
@@ -329,6 +347,79 @@ Delete a listing owned by the current user. Returns `204 No Content`.
 
 ---
 
+## Orders (`/orders`)
+
+Every order reserves the buyer's wallet balance immediately using a `hold` transaction. Wallet balance is only mutated when a transaction row exists, ensuring a tamper-proof audit log.
+
+### `POST /orders`
+
+Create an order for an approved listing. Requires `listing_id`, `shipping_address_id`, and an `idempotency_key`. On success the backend:
+
+1. Locks the listing to prevent double selling.
+2. Creates the order row and returns it.
+3. Creates a `hold` transaction against the buyer wallet for `price_amount` and subtracts the same amount from their wallet balance.
+
+**Request**
+```json
+{
+  "listing_id": "2cef6666-0a34-4e71-acdd-8152d39a0bd9",
+  "shipping_address_id": "c0b7536a-fa96-425f-8887-8a3c2404d0a6",
+  "idempotency_key": "order-2cef-001"
+}
+```
+
+**201 Response**
+```json
+{
+  "id": "155333f5-835f-49fb-9077-b15b86bba3f4",
+  "listing_id": "2cef6666-0a34-4e71-acdd-8152d39a0bd9",
+  "buyer_id": "5aa3fe69-c1e0-43bd-8afb-9b1df0a1c2d7",
+  "seller_id": "b1718b28-c077-4463-a8d1-9239ae7fd2f2",
+  "price_amount": "100.00",
+  "buyer_fee": "0.00",
+  "status": "pending",
+  "shipping_address_snapshot": {
+    "line1": "221B Baker Street",
+    "line2": "Apt 4",
+    "city": "Casablanca",
+    "state": "Grand Casablanca",
+    "postal_code": "20000",
+    "country": "MA"
+  },
+  "created_at": "2025-01-21T12:00:00Z",
+  "updated_at": "2025-01-21T12:00:00Z"
+}
+```
+
+### `GET /orders/me`
+Return every order where the current user is the buyer. Use this to render purchase history.
+
+### `GET /orders/sold`
+Return every order where the current user is the seller. Used for the "sold items" dashboard.
+
+### `GET /orders/{order_id}`
+Fetch a single order that belongs to the buyer or seller (admins bypass the check).
+
+### `PATCH /orders/{order_id}/status`
+Advance an order through the lifecycle. Allowed transitions:
+
+- Seller: `pending → confirmed → shipped`
+- Admin: `shipped → delivered`
+- Buyer: `delivered → completed`
+- Seller/Admin: `pending → canceled`
+
+Wallet hooks fire automatically:
+
+1. **Order completed** (`delivered → completed`):
+   - Release buyer hold (no balance change).
+   - Credit seller wallet (`credit` transaction) for the order amount.
+2. **Order canceled**:
+   - Release buyer hold AND refund the balance (`release` transaction that adds the amount back).
+
+Any other transitions are rejected with `Invalid status transition`.
+
+---
+
 ## Categories (`/categories`)
 
 `GET /categories` returns the full list to drive dropdowns. Public endpoint.
@@ -338,6 +429,97 @@ Delete a listing owned by the current user. Returns `204 No Content`.
 [
   { "id": "2174af61-e5d4-4f96-a91f-5e2af00f2fbb", "name": "Shoes" },
   { "id": "bb8f81e1-96a8-4c4e-8239-a2aadb5d1e25", "name": "Jackets" }
+]
+```
+
+---
+
+## Wallet (`/wallet`)
+
+Each wallet row stores the *available* balance for a user. Balance only changes alongside a transaction, enabling a complete audit trail.
+
+### Transaction types
+
+- `hold`: reserve buyer funds during checkout (balance decreases).
+- `release`: remove a hold. If the order is canceled, the wallet balance increases; if the order completes, balance stays the same.
+- `credit`: add funds (admin adjustments, order payouts, refunds).
+- `debit`: subtract funds (withdrawals).
+
+### Statuses
+
+`pending`, `succeeded`, `failed`. All wallet flows added here mark transactions as `succeeded`.
+
+### `GET /wallet/me`
+
+Returns the current wallet balance for the authenticated user.
+
+**200 Response**
+```json
+{ "id": "0998caa7-493d-4d5c-93d4-8a49926e3c5d", "balance": "540.00", "updated_at": "2025-01-22T10:00:00Z" }
+```
+
+### `POST /wallet/withdraw`
+
+Simulate a withdrawal request. Validates sufficient balance, subtracts the funds via a `debit` transaction, and creates a `withdrawal_requests` row marked `succeeded`.
+
+**Request**
+```json
+{
+  "amount": "120.00",
+  "destination": "CIH Bank •••• 9999",
+  "idempotency_key": "withdraw-jan-001"
+}
+```
+
+**201 Response**
+```json
+{
+  "id": "2f239f7f-5267-43fe-9ac0-8f69915fcb64",
+  "amount": "120.00",
+  "destination": "CIH Bank •••• 9999",
+  "status": "succeeded",
+  "created_at": "2025-01-22T15:02:11Z"
+}
+```
+
+If the same `idempotency_key` is reused, the server returns the original withdrawal instance.
+
+Each successful withdrawal instantly generates a notification as well, so users get feedback even if they navigate away from the wallet page.
+
+---
+
+## Notifications (`/notifications`)
+
+Notifications capture marketplace events for users:
+
+- Buyers receive a notification when an order is confirmed, shipped, or delivered.
+- Sellers receive an `item_sold` notification the moment an order is created for their listing.
+- Wallet withdrawals emit a `withdrawal_created` notification.
+- Future flows (buyer questions, disputes) will reuse the same feed.
+
+### `GET /notifications/me`
+
+Return the 50 most recent notifications for the authenticated user. Pass `mark_as_read=true` to clear the badge (`has_unread_notifications` flips to `false`).
+
+**Query params**
+
+- `mark_as_read` (default `false`): mark every notification as read after fetching.
+
+**200 Response**
+```json
+[
+  {
+    "id": "fd36f96a-0ebf-4bdf-8967-6d8d5c619f76",
+    "event": "order_shipped",
+    "payload": {
+      "order_id": "155333f5-835f-49fb-9077-b15b86bba3f4",
+      "listing_id": "2cef6666-0a34-4e71-acdd-8152d39a0bd9",
+      "status": "shipped"
+    },
+    "is_read": false,
+    "created_at": "2025-01-23T09:42:00Z",
+    "read_at": null
+  }
 ]
 ```
 

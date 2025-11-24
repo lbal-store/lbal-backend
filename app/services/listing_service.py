@@ -39,6 +39,12 @@ class ListingService:
         data = payload.dict()
         return self.listing_repository.create_listing(user_id, data)
 
+    def bulk_create_listings(self, user_id: UUID, payloads: list[ListingCreate]) -> list[Listing]:
+        listings: list[Listing] = []
+        for payload in payloads:
+            listings.append(self.create_listing(user_id, payload))
+        return listings
+
     def update_listing(self, user_id: UUID, listing_id: UUID, payload: ListingUpdate) -> Listing:
         listing = self._get_listing_or_404(listing_id)
         self._ensure_listing_owner(listing, user_id)
@@ -70,13 +76,14 @@ class ListingService:
         page: int,
         page_size: int,
     ) -> tuple[list[Listing], int, int, int]:
-        self._validate_category(filters.category_id)
+        category_id = self._resolve_category_filter(filters.category_id)
+        self._validate_category(category_id)
 
         page_size = min(page_size, MAX_PAGE_SIZE)
         offset = (page - 1) * page_size
 
         listings, total = self.listing_repository.search_listings(
-            category_id=filters.category_id,
+            category_id=category_id,
             city=filters.city,
             min_price=filters.min_price,
             max_price=filters.max_price,
@@ -151,3 +158,26 @@ class ListingService:
                 message="Category does not exist.",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+
+    def _resolve_category_filter(self, category_identifier: UUID | str | None) -> UUID | None:
+        if not category_identifier:
+            return None
+
+        if isinstance(category_identifier, UUID):
+            return category_identifier
+
+        identifier = str(category_identifier).strip()
+        if not identifier:
+            return None
+
+        try:
+            return UUID(identifier)
+        except ValueError:
+            category = self.category_repository.get_by_name(identifier)
+            if not category:
+                raise ApplicationError(
+                    code=ErrorCode.VALIDATION_ERROR,
+                    message="Category does not exist.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                )
+            return category.id

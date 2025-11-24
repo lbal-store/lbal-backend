@@ -17,10 +17,18 @@ from app.db.repositories.address_repository import AddressRepository
 from app.db.repositories.listing_repository import ListingRepository
 from app.db.repositories.listing_image_repository import ListingImageRepository
 from app.db.repositories.category_repository import CategoryRepository
+from app.db.repositories.order_repository import OrderRepository
+from app.db.repositories.transaction_repository import TransactionRepository
+from app.db.repositories.wallet_repository import WalletRepository
+from app.db.repositories.withdrawal_request_repository import WithdrawalRequestRepository
+from app.db.repositories.notification_repository import NotificationRepository
 from app.services.address_service import AddressService
 from app.services.auth_service import AuthService
 from app.services.listing_service import ListingService
+from app.services.order_service import OrderService
 from app.services.s3_service import S3Service
+from app.services.wallet_service import WalletService
+from app.services.notification_service import NotificationService
 from app.utils.redis_client import get_redis_client
 
 
@@ -57,6 +65,10 @@ def get_category_repository(db: Session = Depends(get_db)) -> CategoryRepository
     return CategoryRepository(db)
 
 
+def get_order_repository(db: Session = Depends(get_db)) -> OrderRepository:
+    return OrderRepository(db)
+
+
 def get_address_service(
     db: Session = Depends(get_db),
     address_repo: AddressRepository = Depends(get_address_repository),
@@ -79,6 +91,56 @@ def get_listing_service(
 def get_s3_service() -> S3Service:
     settings = get_settings()
     return S3Service(settings)
+
+
+def get_order_service(
+    db: Session = Depends(get_db),
+    order_repo: OrderRepository = Depends(get_order_repository),
+    listing_repo: ListingRepository = Depends(get_listing_repository),
+    address_repo: AddressRepository = Depends(get_address_repository),
+) -> OrderService:
+    notification_service = _build_notification_service(db)
+    wallet_service = _build_wallet_service(db, notification_service=notification_service)
+    return OrderService(
+        db=db,
+        order_repository=order_repo,
+        listing_repository=listing_repo,
+        address_repository=address_repo,
+        wallet_service=wallet_service,
+        notification_service=notification_service,
+    )
+
+
+def get_wallet_service(db: Session = Depends(get_db)) -> WalletService:
+    notification_service = _build_notification_service(db)
+    return _build_wallet_service(db, notification_service=notification_service)
+
+
+def get_notification_service(db: Session = Depends(get_db)) -> NotificationService:
+    return _build_notification_service(db)
+
+
+def _build_wallet_service(db: Session, notification_service: NotificationService | None = None) -> WalletService:
+    wallet_repo = WalletRepository(db)
+    transaction_repo = TransactionRepository(db)
+    withdrawal_repo = WithdrawalRequestRepository(db)
+    return WalletService(
+        db=db,
+        wallet_repository=wallet_repo,
+        transaction_repository=transaction_repo,
+        withdrawal_repository=withdrawal_repo,
+        notification_service=notification_service,
+    )
+
+
+def _build_notification_service(db: Session) -> NotificationService:
+    notification_repo = NotificationRepository(db)
+    user_repo = UserRepository(db)
+    return NotificationService(
+        db=db,
+        notification_repository=notification_repo,
+        user_repository=user_repo,
+    )
 
 
 async def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:

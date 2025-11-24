@@ -8,6 +8,7 @@ from app.api.v1 import deps
 from app.api.v1.schemas.listings import (
     ListingCreate,
     ListingFilterParams,
+    BulkListingCreateRequest,
     CreateListingImageRequest,
     ListingImageCreate,
     ListingImageResponse,
@@ -16,7 +17,7 @@ from app.api.v1.schemas.listings import (
     ListingUpdate,
 )
 from app.core.errors import ApplicationError, ErrorCode
-from app.db.models.user import User
+from app.db.models.user import User, UserRole
 from app.services.listing_service import ListingService
 from app.services.s3_service import S3Service
 
@@ -56,6 +57,27 @@ def create_listing(
 ) -> ListingResponse:
     listing = listing_service.create_listing(current_user.id, payload)
     return ListingResponse.from_orm(listing)
+
+
+@router.post(
+    "/bulk",
+    response_model=list[ListingResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+def bulk_create_listings(
+    payload: BulkListingCreateRequest,
+    current_user: User = Depends(deps.get_current_user),
+    listing_service: ListingService = Depends(deps.get_listing_service),
+) -> list[ListingResponse]:
+    if current_user.role != UserRole.admin:
+        raise ApplicationError(
+            code=ErrorCode.ACCESS_DENIED,
+            message="Only administrators can bulk create listings.",
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    listings = listing_service.bulk_create_listings(current_user.id, payload.listings)
+    return [ListingResponse.from_orm(listing) for listing in listings]
 
 
 @router.get("/me", response_model=list[ListingResponse])

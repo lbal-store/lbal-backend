@@ -19,6 +19,7 @@ class ErrorCode(str, Enum):
     ACCESS_DENIED = "ACCESS_DENIED"
     HTTP_ERROR = "HTTP_ERROR"
     EMAIL_NOT_VERIFIED = "EMAIL_NOT_VERIFIED"
+    INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS"
 
 
 class ApplicationError(Exception):

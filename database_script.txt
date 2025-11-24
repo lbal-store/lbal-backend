@@ -88,8 +88,28 @@ CREATE INDEX idx_addresses_user ON addresses(user_id);
 
 CREATE TABLE categories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(255) NOT NULL
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE subcategories (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    parent_category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_subcategories_parent ON subcategories(parent_category_id);
+
+CREATE TABLE IF NOT EXISTS listing_sizes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+    name VARCHAR(255) NOT NULL,
+    label VARCHAR(64) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_listing_sizes_category_label ON listing_sizes(category_id, label);
 
 CREATE TABLE listings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -213,3 +233,298 @@ CREATE TABLE moderation_logs (
     target_user UUID REFERENCES users(id),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE orders
+    ADD COLUMN IF NOT EXISTS buyer_id UUID REFERENCES users(id) NOT NULL,
+    ADD COLUMN IF NOT EXISTS seller_id UUID REFERENCES users(id) NOT NULL,
+    ADD COLUMN IF NOT EXISTS shipping_address_id UUID REFERENCES addresses(id) NOT NULL,
+    ADD COLUMN IF NOT EXISTS shipping_address_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS price_amount NUMERIC(12, 2) NOT NULL,
+    ADD COLUMN IF NOT EXISTS buyer_fee NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128) UNIQUE NOT NULL,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+-- indexes / uniqueness (also guarded)
+CREATE INDEX IF NOT EXISTS idx_orders_buyer_id ON orders(buyer_id);
+CREATE INDEX IF NOT EXISTS idx_orders_seller_id ON orders(seller_id);
+CREATE INDEX IF NOT EXISTS idx_orders_listing_id ON orders(listing_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_idempotency_key ON orders(idempotency_key);
+
+ALTER TABLE categories
+    ADD COLUMN IF NOT EXISTS slug VARCHAR(255) UNIQUE,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS subcategories (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    parent_category_id UUID NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS listing_conditions (
+    code VARCHAR(64) PRIMARY KEY,
+    label VARCHAR(255) NOT NULL,
+    description TEXT
+);
+
+CREATE TABLE IF NOT EXISTS listing_sizes (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+    name VARCHAR(255) NOT NULL,
+    label VARCHAR(64) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_listing_sizes_category_label ON listing_sizes(category_id, label);
+
+-- reset taxonomy tables so foreign key constraints don't break when reseeding
+DO $$
+BEGIN
+    EXECUTE 'TRUNCATE TABLE listing_images RESTART IDENTITY CASCADE';
+EXCEPTION WHEN undefined_table THEN
+    NULL;
+END $$;
+
+DO $$
+BEGIN
+    EXECUTE 'TRUNCATE TABLE listings RESTART IDENTITY CASCADE';
+EXCEPTION WHEN undefined_table THEN
+    NULL;
+END $$;
+
+DO $$
+BEGIN
+    EXECUTE 'TRUNCATE TABLE listing_sizes RESTART IDENTITY CASCADE';
+EXCEPTION WHEN undefined_table THEN
+    NULL;
+END $$;
+
+DO $$
+BEGIN
+    EXECUTE 'TRUNCATE TABLE subcategories RESTART IDENTITY CASCADE';
+EXCEPTION WHEN undefined_table THEN
+    NULL;
+END $$;
+
+DO $$
+BEGIN
+    EXECUTE 'TRUNCATE TABLE categories RESTART IDENTITY CASCADE';
+EXCEPTION WHEN undefined_table THEN
+    NULL;
+END $$;
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public'
+          AND table_name = 'listing_conditions'
+    ) THEN
+        EXECUTE 'DELETE FROM listing_conditions';
+    END IF;
+END $$;
+
+-- seed top-level categories
+INSERT INTO categories (name, slug) VALUES
+    ('Women', 'women'),
+    ('Men', 'men'),
+    ('Kids', 'kids'),
+    ('Vintage', 'vintage'),
+    ('Sneakers', 'sneakers'),
+    ('Streetwear', 'streetwear'),
+    ('Luxury', 'luxury'),
+    ('Clothing', 'clothing'),
+    ('Shoes', 'shoes'),
+    ('Bags', 'bags'),
+    ('Accessories', 'accessories');
+
+-- seed women subcategories
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('Dresses', 'women-dresses'),
+    ('Tops', 'women-tops'),
+    ('T-shirts', 'women-tshirts'),
+    ('Jeans', 'women-jeans'),
+    ('Pants', 'women-pants'),
+    ('Jackets & Coats', 'women-jackets-coats'),
+    ('Skirts', 'women-skirts'),
+    ('Sweaters / Hoodies', 'women-sweaters-hoodies'),
+    ('Sportswear', 'women-sportswear'),
+    ('Swimwear', 'women-swimwear'),
+    ('Underwear & Lingerie', 'women-underwear-lingerie')
+) AS v(name, slug) ON c.slug = 'women';
+
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('Sneakers', 'women-sneakers'),
+    ('Heels', 'women-heels'),
+    ('Boots', 'women-boots'),
+    ('Flats', 'women-flats'),
+    ('Sandals', 'women-sandals')
+) AS v(name, slug) ON c.slug = 'women';
+
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('Handbags', 'women-handbags'),
+    ('Shoulder bags', 'women-shoulder-bags'),
+    ('Backpacks', 'women-backpacks'),
+    ('Tote bags', 'women-tote-bags'),
+    ('Wallets', 'women-wallets')
+) AS v(name, slug) ON c.slug = 'women';
+
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('Jewelry', 'women-jewelry'),
+    ('Sunglasses', 'women-sunglasses'),
+    ('Belts', 'women-belts'),
+    ('Scarves', 'women-scarves'),
+    ('Hats', 'women-hats')
+) AS v(name, slug) ON c.slug = 'women';
+
+-- seed men subcategories
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('T-shirts', 'men-tshirts'),
+    ('Shirts', 'men-shirts'),
+    ('Hoodies & Sweatshirts', 'men-hoodies-sweatshirts'),
+    ('Jackets', 'men-jackets'),
+    ('Pants', 'men-pants'),
+    ('Jeans', 'men-jeans'),
+    ('Shorts', 'men-shorts'),
+    ('Sportswear', 'men-sportswear')
+) AS v(name, slug) ON c.slug = 'men';
+
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('Sneakers', 'men-sneakers'),
+    ('Boots', 'men-boots'),
+    ('Loafers', 'men-loafers'),
+    ('Sandals', 'men-sandals')
+) AS v(name, slug) ON c.slug = 'men';
+
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('Watches', 'men-watches'),
+    ('Caps', 'men-caps'),
+    ('Glasses', 'men-glasses'),
+    ('Belts', 'men-belts'),
+    ('Bags', 'men-bags')
+) AS v(name, slug) ON c.slug = 'men';
+
+-- seed kids subcategories
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('Boys clothing', 'kids-boys-clothing'),
+    ('Girls clothing', 'kids-girls-clothing'),
+    ('Baby clothing', 'kids-baby-clothing'),
+    ('Kids shoes', 'kids-shoes'),
+    ('Toys', 'kids-toys')
+) AS v(name, slug) ON c.slug = 'kids';
+
+-- seed sneakers brands
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('Nike', 'sneakers-nike'),
+    ('Jordan', 'sneakers-jordan'),
+    ('Adidas', 'sneakers-adidas'),
+    ('New Balance', 'sneakers-new-balance'),
+    ('Yeezy', 'sneakers-yeezy'),
+    ('Puma', 'sneakers-puma'),
+    ('Converse', 'sneakers-converse'),
+    ('Vans', 'sneakers-vans'),
+    ('Luxury sneakers', 'sneakers-luxury'),
+    ('Other', 'sneakers-other')
+) AS v(name, slug) ON c.slug = 'sneakers';
+
+-- seed streetwear subcategories
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('Hoodies', 'streetwear-hoodies'),
+    ('Graphic tees', 'streetwear-graphic-tees'),
+    ('Cargo pants', 'streetwear-cargo-pants'),
+    ('Streetwear jackets', 'streetwear-jackets'),
+    ('Skate shoes', 'streetwear-skate-shoes'),
+    ('Streetwear accessories', 'streetwear-accessories')
+) AS v(name, slug) ON c.slug = 'streetwear';
+
+-- seed luxury subcategories
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('Designer bags', 'luxury-designer-bags'),
+    ('Designer shoes', 'luxury-designer-shoes'),
+    ('Designer clothing', 'luxury-designer-clothing'),
+    ('Watches', 'luxury-watches'),
+    ('Jewelry', 'luxury-jewelry')
+) AS v(name, slug) ON c.slug = 'luxury';
+
+-- global filter categories as catch-all subcategories
+INSERT INTO subcategories (parent_category_id, name, slug)
+SELECT c.id, v.name, v.slug
+FROM categories c
+JOIN (VALUES
+    ('All Clothing', 'global-all-clothing', 'clothing'),
+    ('All Shoes', 'global-all-shoes', 'shoes'),
+    ('All Bags', 'global-all-bags', 'bags'),
+    ('All Accessories', 'global-all-accessories', 'accessories')
+) AS v(name, slug, target_slug) ON c.slug = v.target_slug;
+
+-- seed listing conditions
+INSERT INTO listing_conditions (code, label, description) VALUES
+    ('new_with_tags', 'New with tags', 'Never worn, retail tags attached'),
+    ('new_without_tags', 'New without tags', 'Never worn, tags removed'),
+    ('excellent', 'Excellent', 'Barely worn, no visible flaws'),
+    ('good', 'Good', 'Minor wear or light signs of use'),
+    ('fair', 'Fair', 'Visible wear, still functional');
+
+-- seed common apparel sizes
+INSERT INTO listing_sizes (category_id, name, label)
+SELECT NULL, v.name, v.label
+FROM (VALUES
+    ('Extra Small', 'XS'),
+    ('Small', 'S'),
+    ('Medium', 'M'),
+    ('Large', 'L'),
+    ('Extra Large', 'XL'),
+    ('2XL', 'XXL')
+) AS v(name, label);
+
+-- seed shoe sizes tied to Shoes category
+INSERT INTO listing_sizes (category_id, name, label)
+SELECT c.id, v.name, v.label
+FROM categories c
+JOIN (VALUES
+    ('EU 36', 'EU36'),
+    ('EU 37', 'EU37'),
+    ('EU 38', 'EU38'),
+    ('EU 39', 'EU39'),
+    ('EU 40', 'EU40'),
+    ('EU 41', 'EU41'),
+    ('EU 42', 'EU42'),
+    ('EU 43', 'EU43'),
+    ('EU 44', 'EU44'),
+    ('EU 45', 'EU45')
+) AS v(name, label) ON c.slug = 'shoes';
