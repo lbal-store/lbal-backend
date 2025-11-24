@@ -116,6 +116,8 @@ Invalidate the refresh token belonging to the current session. If the request bo
 { "all": true }
 ```
 
+(using the optional request makes it have the same effect as logout-all. TODO: check both again)
+
 ### `POST /auth/logout-all`
 Authenticated endpoint that removes every session for the current user.
 
